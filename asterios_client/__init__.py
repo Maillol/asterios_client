@@ -38,8 +38,52 @@ def get_puzzle(args):
     return json.loads(response.read().decode("utf-8"))
 
 
-class ShowCommand:
+def _filter_traceback(tb):
+    """
+    Remove this module from traceback.
+    """
+    expected_line = '  File "{}"'.format(__file__)
+    return [line for line in tb if not line.startswith(expected_line)]
 
+
+def send_answer(solve_func, args):
+    puzzle = get_puzzle(args)["puzzle"]
+
+    try:
+        solution_or_error = solve_func(puzzle)
+    except Exception as error:
+        tb = traceback.format_exception(type(error), error, error.__traceback__)
+        tb = _filter_traceback(tb)
+        exit("".join(tb))
+
+    try:
+        solution = json.dumps(solution_or_error)
+    except (ValueError, TypeError) as error:
+        exit(
+            "The solve function should return a"
+            " JSON serializable object ({})".format(error)
+        )
+
+    url = "{host}/asterios/{team}/member/{member_id}".format(
+        host=args.host, team=args.team, member_id=args.member_id
+    )
+
+    try:
+        # headers=dict(headers)
+        request = Request(url, method="POST")
+    except ValueError:
+        exit("Error: Wrong url: `{}`".format(url))
+    else:
+        request.data = solution.encode("utf-8")
+        try:
+            response = urlopen(request)  # timeout=120
+        except HTTPError as error:
+            exit(json.loads(error.read().decode("utf-8")))
+        else:
+            print(json.loads(response.read().decode("utf-8")))
+
+
+class ShowCommand:
     def __init__(self, subparsers):
         show_parser = subparsers.add_parser(
             "show", aliases=["sh"], help="Show the current puzzle"
@@ -110,15 +154,6 @@ class ShowCommand:
 
 
 class SolveCommand:
-
-    @staticmethod
-    def _filter_traceback(tb):
-        """
-        Remove this module from traceback.
-        """
-        expected_line = '  File "{}"'.format(__file__)
-        return [line for line in tb if not line.startswith(expected_line)]
-
     def __init__(self, subparsers):
         solve_parser = subparsers.add_parser(
             "solve",
@@ -144,54 +179,21 @@ class SolveCommand:
         """
 
         module_solver = importlib.import_module(args.module)
-
         if not (hasattr(module_solver, "solve") and callable(module_solver.solve)):
             exit("Error: `solve` function not found in module {}".format(module_solver))
-
-        puzzle = get_puzzle(args)["puzzle"]
-
-        try:
-            solution_or_error = module_solver.solve(puzzle)
-        except Exception as error:
-            tb = traceback.format_exception(type(error), error, error.__traceback__)
-            tb = self._filter_traceback(tb)
-            exit("".join(tb))
-
-        try:
-            solution = json.dumps(solution_or_error)
-        except (ValueError, TypeError) as error:
-            exit(
-                "The solve function should return a"
-                " JSON serializable object ({})".format(error)
-            )
-
-        url = "{host}/asterios/{team}/member/{member_id}".format(
-            host=args.host, team=args.team, member_id=args.member_id
-        )
-
-        try:
-            # headers=dict(headers)
-            request = Request(url, method="POST")
-        except ValueError:
-            exit("Error: Wrong url: `{}`".format(url))
-        else:
-            request.data = solution.encode("utf-8")
-            try:
-                response = urlopen(request)  # timeout=120
-            except HTTPError as error:
-                exit(json.loads(error.read().decode("utf-8")))
-            else:
-                print(json.loads(response.read().decode("utf-8")))
+        send_answer(module_solver.solve, args)
 
 
 class GenerateModuleCommand:
-
     def __init__(self, subparsers):
         parser = subparsers.add_parser(
             "generate_module",
             aliases=["ge"],
             help="Generate a module containing the solve function",
         )
+        parser.add_argument("host", help="The Asterios server hostname")
+        parser.add_argument("team", help="The name of your team or game")
+        parser.add_argument("member_id", help="Your member id")
         parser.add_argument(
             "--module",
             help="The module name containing the solve function without the `.py`",
@@ -217,15 +219,28 @@ class GenerateModuleCommand:
                         You can execute this function using:
 
                             $ python3 -m asterios_client so ...
-                        
+
                         See `$ python3 -m asterios_client so --help` 
                         """
 
                         puzzle_solved = '...'
 
                         return puzzle_solved
-                    '''
+
+
+                    if __name__ == '__main__':
+                        from types import SimpleNamespace
+                        from asterios_client import send_answer
+
+                        CONFIG = SimpleNamespace(
+                            host={host!r},
+                            team={team!r},
+                            member_id={member_id!r}
+                        )
+
+                        send_answer(solve, CONFIG)
+                    '''.format(
+                        host=args.host, team=args.team, member_id=args.member_id
+                    )
                 )
             )
-
-
